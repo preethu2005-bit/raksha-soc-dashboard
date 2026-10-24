@@ -1,0 +1,38 @@
+
+raw_log,label
+"User logged in successfully",Benign
+"Scheduled backup completed successfully",Benign
+"System health check passed",Benign
+"Application service started normally",Benign
+"Routine antivirus scan completed",Benign
+"User logged out successfully",Benign
+"DNS query completed normally",Benign
+"Database connection established",Benign
+"Software update installed successfully",Benign
+"Disk space check completed",Benign
+"Normal web request received",Benign
+"Firewall allowed trusted internal traffic",Benign
+"Multiple failed login attempts detected",Suspicious
+"Login attempts from unusual location",Suspicious
+"Repeated password reset requests",Suspicious
+"Unexpected administrator login",Suspicious
+"Unusual outbound network traffic",Suspicious
+"Suspicious activity detected on endpoint",Suspicious
+"Unauthorized access attempt blocked",Suspicious
+"Privilege escalation attempt detected",Suspicious
+"Repeated access denied events",Suspicious
+"Unknown process accessing sensitive folder",Suspicious
+"Unusual traffic to external server",Suspicious
+"Multiple accounts locked after failed logins",Suspicious
+"Known malware signature detected",Malicious
+"Ransomware encrypting user files",Malicious
+"Trojan detected and quarantined",Malicious
+"Malware payload execution detected",Malicious
+"Confirmed data exfiltration to attacker server",Malicious
+"Command and control connection confirmed",Malicious
+"Credential stealing malware identified",Malicious
+"Destructive ransomware attack in progress",Malicious
+"Known malicious executable detected",Malicious
+"Confirmed malicious script execution",Malicious
+"Botnet infection confirmed on endpoint",Malicious
+"Critical malware infection detected",Malicious

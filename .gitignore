@@ -1,0 +1,18 @@
+# Python virtual environments
+.venv/
+.venv-1/
+.venv-2/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Frontend dependencies and build files
+frontend/node_modules/
+frontend/dist/
+
+# Environment secrets
+.env
+
+# Local SQLite database
+backend/events.db
