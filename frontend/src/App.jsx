@@ -1,8 +1,8 @@
-
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ShieldCheck, Activity, AlertTriangle, CheckCircle,
-  Search, RefreshCw, ShieldAlert, Clock3, X, Server
+  Search, RefreshCw, ShieldAlert, Clock3, X, Server,
+  ArrowUpDown
 } from "lucide-react";
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend
@@ -18,15 +18,28 @@ const COLORS = {
   Malicious: "#ef4444",
 };
 
+const STATUSES = ["New", "Reviewed", "False Positive", "Escalated"];
+const RISK_LEVELS = ["Benign", "Suspicious", "Malicious"];
+
 function App() {
   const [events, setEvents] = useState([]);
   const [stats, setStats] = useState({
     total_events: 0,
     risk_counts: { Benign: 0, Suspicious: 0, Malicious: 0 },
-    status_counts: { New: 0, "In Progress": 0, Resolved: 0 },
+    status_counts: {
+      New: 0,
+      Reviewed: 0,
+      "False Positive": 0,
+      Escalated: 0,
+    },
+    source_counts: {},
   });
+
   const [riskFilter, setRiskFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [sortBy, setSortBy] = useState("timestamp");
+  const [sortOrder, setSortOrder] = useState("desc");
   const [search, setSearch] = useState("");
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -39,8 +52,10 @@ function App() {
 
     try {
       const params = new URLSearchParams();
+
       if (riskFilter) params.set("risk_level", riskFilter);
       if (statusFilter) params.set("status", statusFilter);
+      if (sourceFilter) params.set("source", sourceFilter);
 
       const [eventResponse, statsResponse] = await Promise.all([
         fetch(`${API}/events?${params.toString()}`),
@@ -56,14 +71,16 @@ function App() {
 
       setEvents(eventData.events || []);
       setStats(statsData);
-    } catch {
+    } catch (err) {
       setError(
-        "Cannot connect to the backend. Check that Flask is running on port 5000."
+        err.message === "Could not load dashboard data."
+          ? err.message
+          : "Cannot connect to the backend. Check that Flask is running on port 5000."
       );
     } finally {
       setLoading(false);
     }
-  }, [riskFilter, statusFilter]);
+  }, [riskFilter, statusFilter, sourceFilter]);
 
   useEffect(() => {
     loadData();
@@ -97,16 +114,54 @@ function App() {
     }
   };
 
-  const visibleEvents = events.filter((event) => {
-    const term = search.toLowerCase();
-    return (
+  const sourceOptions = useMemo(() => {
+    const sources = new Set(
+      events.map((event) => event.source).filter(Boolean)
+    );
+    Object.keys(stats.source_counts || {}).forEach((source) => sources.add(source));
+    return [...sources].sort((a, b) => a.localeCompare(b));
+  }, [events, stats.source_counts]);
+
+  const visibleEvents = useMemo(() => {
+    const term = search.trim().toLowerCase();
+
+    const filtered = events.filter((event) => (
       (event.raw_log || "").toLowerCase().includes(term) ||
       (event.source || "").toLowerCase().includes(term) ||
       String(event.id).includes(term)
-    );
-  });
+    ));
 
-  const riskData = ["Benign", "Suspicious", "Malicious"].map((name) => ({
+    const riskRank = { Benign: 1, Suspicious: 2, Malicious: 3 };
+    const statusRank = {
+      New: 1,
+      Reviewed: 2,
+      "False Positive": 3,
+      Escalated: 4,
+    };
+
+    return [...filtered].sort((a, b) => {
+      let comparison = 0;
+
+      if (sortBy === "risk_level") {
+        comparison = (riskRank[a.risk_level] || 0) - (riskRank[b.risk_level] || 0);
+      } else if (sortBy === "source") {
+        comparison = (a.source || "").localeCompare(b.source || "");
+      } else if (sortBy === "status") {
+        comparison = (statusRank[a.status] || 0) - (statusRank[b.status] || 0);
+      } else if (sortBy === "confidence") {
+        comparison = Number(a.confidence || 0) - Number(b.confidence || 0);
+      } else if (sortBy === "id") {
+        comparison = Number(a.id) - Number(b.id);
+      } else {
+        comparison = new Date(a.timestamp || 0).getTime()
+          - new Date(b.timestamp || 0).getTime();
+      }
+
+      return sortOrder === "asc" ? comparison : -comparison;
+    });
+  }, [events, search, sortBy, sortOrder]);
+
+  const riskData = RISK_LEVELS.map((name) => ({
     name,
     value: stats.risk_counts?.[name] || 0,
   }));
@@ -114,6 +169,10 @@ function App() {
   const formatDate = (date) => {
     if (!date) return "—";
     return new Date(date).toLocaleString();
+  };
+
+  const toggleSortOrder = () => {
+    setSortOrder((current) => current === "asc" ? "desc" : "asc");
   };
 
   return (
@@ -128,12 +187,8 @@ function App() {
         </div>
 
         <div className="side-label">WORKSPACE</div>
-        <div className="nav-item active">
-          <Activity size={18} /> Security Overview
-        </div>
-        <div className="nav-item">
-          <ShieldAlert size={18} /> Security Events
-        </div>
+        <div className="nav-item active"><Activity size={18} /> Security Overview</div>
+        <div className="nav-item"><ShieldAlert size={18} /> Security Events</div>
 
         <div className="sidebar-bottom">
           <div className="connection-dot" />
@@ -149,9 +204,7 @@ function App() {
           <div>
             <p className="eyebrow">SECURITY CENTER / OVERVIEW</p>
             <h1>Security Dashboard</h1>
-            <p className="subheading">
-              Monitor, investigate, and manage security events.
-            </p>
+            <p className="subheading">Monitor, investigate, and manage security events.</p>
           </div>
           <button className="refresh-button" onClick={loadData} disabled={loading}>
             <RefreshCw size={16} className={loading ? "spin" : ""} />
@@ -163,30 +216,10 @@ function App() {
         {notice && <div className="message success-message">{notice}</div>}
 
         <section className="stat-grid">
-          <StatCard
-            icon={<Server />}
-            label="Total Events"
-            value={stats.total_events || 0}
-            color="blue"
-          />
-          <StatCard
-            icon={<ShieldAlert />}
-            label="Malicious"
-            value={stats.risk_counts?.Malicious || 0}
-            color="red"
-          />
-          <StatCard
-            icon={<AlertTriangle />}
-            label="Suspicious"
-            value={stats.risk_counts?.Suspicious || 0}
-            color="amber"
-          />
-          <StatCard
-            icon={<CheckCircle />}
-            label="Benign"
-            value={stats.risk_counts?.Benign || 0}
-            color="green"
-          />
+          <StatCard icon={<Server />} label="Total Events" value={stats.total_events || 0} color="blue" />
+          <StatCard icon={<ShieldAlert />} label="Malicious" value={stats.risk_counts?.Malicious || 0} color="red" />
+          <StatCard icon={<AlertTriangle />} label="Suspicious" value={stats.risk_counts?.Suspicious || 0} color="amber" />
+          <StatCard icon={<CheckCircle />} label="Benign" value={stats.risk_counts?.Benign || 0} color="green" />
         </section>
 
         <section className="content-grid">
@@ -239,10 +272,10 @@ function App() {
               <Clock3 size={19} />
             </div>
 
-            {["New", "In Progress", "Resolved"].map((status) => (
+            {STATUSES.map((status) => (
               <div className="status-row" key={status}>
                 <div className="status-name">
-                  <span className={`status-dot ${status.replace(" ", "-").toLowerCase()}`} />
+                  <span className={`status-dot ${status.replaceAll(" ", "-").toLowerCase()}`} />
                   {status}
                 </div>
                 <strong>{stats.status_counts?.[status] || 0}</strong>
@@ -277,17 +310,32 @@ function App() {
 
             <select value={riskFilter} onChange={(e) => setRiskFilter(e.target.value)}>
               <option value="">All risk levels</option>
-              <option value="Benign">Benign</option>
-              <option value="Suspicious">Suspicious</option>
-              <option value="Malicious">Malicious</option>
+              {RISK_LEVELS.map((risk) => <option key={risk} value={risk}>{risk}</option>)}
             </select>
 
             <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
               <option value="">All statuses</option>
-              <option value="New">New</option>
-              <option value="In Progress">In Progress</option>
-              <option value="Resolved">Resolved</option>
+              {STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
             </select>
+
+            <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)}>
+              <option value="">All sources</option>
+              {sourceOptions.map((source) => <option key={source} value={source}>{source}</option>)}
+            </select>
+
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} aria-label="Sort events by">
+              <option value="timestamp">Sort: Timestamp</option>
+              <option value="risk_level">Sort: Risk level</option>
+              <option value="source">Sort: Source</option>
+              <option value="status">Sort: Status</option>
+              <option value="confidence">Sort: Confidence</option>
+              <option value="id">Sort: Event ID</option>
+            </select>
+
+            <button className="details-button" onClick={toggleSortOrder} title="Toggle sort direction">
+              <ArrowUpDown size={15} />
+              {sortOrder === "asc" ? "Ascending" : "Descending"}
+            </button>
           </div>
 
           <div className="table-wrap">
@@ -311,14 +359,14 @@ function App() {
                     <td className="log-cell">{event.raw_log}</td>
                     <td>{event.source}</td>
                     <td>
-                      <span className={`risk-badge ${event.risk_level?.toLowerCase()}`}>
+                      <span className={`risk-badge ${(event.risk_level || "").toLowerCase()}`}>
                         {event.risk_level}
                       </span>
                     </td>
                     <td>{(Number(event.confidence) * 100).toFixed(1)}%</td>
                     <td>
-                      <span className={`status-badge ${event.status.replace(" ", "-").toLowerCase()}`}>
-                        {event.status}
+                      <span className={`status-badge ${(event.status || "New").replaceAll(" ", "-").toLowerCase()}`}>
+                        {event.status || "New"}
                       </span>
                     </td>
                     <td className="date-cell">{formatDate(event.timestamp)}</td>
@@ -374,7 +422,7 @@ function App() {
               <div className="detail-field">
                 <label>Predicted Risk</label>
                 <p>
-                  <span className={`risk-badge ${selectedEvent.risk_level?.toLowerCase()}`}>
+                  <span className={`risk-badge ${(selectedEvent.risk_level || "").toLowerCase()}`}>
                     {selectedEvent.risk_level}
                   </span>
                 </p>
@@ -392,12 +440,10 @@ function App() {
             <div className="detail-field">
               <label>Update Case Status</label>
               <select
-                value={selectedEvent.status}
+                value={selectedEvent.status || "New"}
                 onChange={(e) => updateStatus(selectedEvent.id, e.target.value)}
               >
-                <option value="New">New</option>
-                <option value="In Progress">In Progress</option>
-                <option value="Resolved">Resolved</option>
+                {STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
               </select>
             </div>
 

@@ -2,7 +2,7 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import sqlite3
 import os
 import joblib
@@ -10,18 +10,28 @@ import joblib
 app = Flask(__name__)
 CORS(app)
 
-# File paths
+# ---------------- FILE PATHS ----------------
+
 DATABASE = Path(__file__).resolve().parent / "events.db"
 MODEL_PATH = Path(__file__).resolve().parent / "model.joblib"
 
-# API key for write operations
+# ---------------- API SECURITY ----------------
+
 API_KEY = os.environ.get("RAKSHA_API_KEY")
 
-# Allowed values
-VALID_RISK_LEVELS = {"Benign", "Suspicious", "Malicious"}
-VALID_STATUSES = {"New", "In Progress", "Resolved"}
+# ---------------- ALLOWED VALUES ----------------
 
-# Load the trained ML model
+VALID_RISK_LEVELS = {"Benign", "Suspicious", "Malicious"}
+
+VALID_STATUSES = {
+    "New",
+    "Reviewed",
+    "False Positive",
+    "Escalated",
+}
+
+# ---------------- LOAD TRAINED ML MODEL ----------------
+
 if not MODEL_PATH.exists():
     raise FileNotFoundError(
         f"Model not found at {MODEL_PATH}. "
@@ -53,6 +63,19 @@ def initialize_db():
             )
         """)
 
+        # Migrate old status values without deleting events.
+        conn.execute("""
+            UPDATE events
+            SET status = 'Reviewed'
+            WHERE status = 'In Progress'
+        """)
+
+        conn.execute("""
+            UPDATE events
+            SET status = 'False Positive'
+            WHERE status = 'Resolved'
+        """)
+
 
 # ---------------- MACHINE LEARNING ----------------
 
@@ -79,11 +102,43 @@ def require_api_key():
 def parse_positive_int(value, default, maximum):
     try:
         number = int(value)
+
         if number < 1:
             return default
+
         return min(number, maximum)
+
     except (TypeError, ValueError):
         return default
+
+
+def parse_date_filter(value, parameter_name):
+    """
+    Accept ISO dates and datetimes.
+
+    Examples:
+        2026-10-24
+        2026-10-24T15:30:00
+        2026-10-24T15:30:00+00:00
+    """
+    if not value:
+        return None, None
+
+    try:
+        parsed = datetime.fromisoformat(value)
+
+        # Convert timezone-aware dates to UTC.
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc)
+            parsed = parsed.replace(tzinfo=None)
+
+        return parsed.isoformat(), None
+
+    except ValueError:
+        return None, (
+            f"Invalid {parameter_name}. "
+            "Use YYYY-MM-DD or an ISO datetime."
+        )
 
 
 # ---------------- HOME AND HEALTH ----------------
@@ -98,8 +153,8 @@ def home():
             "GET /events",
             "GET /events/<id>",
             "PATCH /events/<id>",
-            "GET /stats"
-        ]
+            "GET /stats",
+        ],
     })
 
 
@@ -141,7 +196,7 @@ def create_event():
     else:
         inputs = [data]
 
-    # Validate all events before saving
+    # Validate all events before inserting any.
     for item in inputs:
         if not isinstance(item, dict):
             return jsonify({
@@ -167,8 +222,10 @@ def create_event():
             or len(source) > 200
         ):
             return jsonify({
-                "error": "source must be a non-empty string "
-                         "up to 200 characters"
+                "error": (
+                    "source must be a non-empty string "
+                    "up to 200 characters"
+                )
             }), 400
 
     created_events = []
@@ -179,9 +236,7 @@ def create_event():
             raw_log = item["raw_log"].strip()
             source = item.get("source", "unknown").strip()
 
-            # Predict risk using the trained ML model
             risk_level, confidence = classify_log(raw_log)
-
             timestamp = datetime.now(timezone.utc).isoformat()
 
             cursor = conn.execute(
@@ -197,8 +252,8 @@ def create_event():
                     timestamp,
                     risk_level,
                     confidence,
-                    "New"
-                )
+                    "New",
+                ),
             )
 
             created_events.append({
@@ -208,7 +263,7 @@ def create_event():
                 "timestamp": timestamp,
                 "risk_level": risk_level,
                 "confidence": confidence,
-                "status": "New"
+                "status": "New",
             })
 
         conn.commit()
@@ -216,6 +271,7 @@ def create_event():
     except sqlite3.Error:
         conn.rollback()
         app.logger.exception("Database error while creating events")
+
         return jsonify({
             "error": "Could not save events"
         }), 500
@@ -227,7 +283,7 @@ def create_event():
         return jsonify({
             "message": "Events saved successfully",
             "count": len(created_events),
-            "events": created_events
+            "events": created_events,
         }), 201
 
     return jsonify(created_events[0]), 201
@@ -241,6 +297,22 @@ def list_events():
     status = request.args.get("status")
     source = request.args.get("source")
 
+    raw_start_date = request.args.get("start_date")
+    raw_end_date = request.args.get("end_date")
+
+    start_date, start_error = parse_date_filter(
+        raw_start_date, "start_date"
+    )
+    end_date, end_error = parse_date_filter(
+        raw_end_date, "end_date"
+    )
+
+    if start_error:
+        return jsonify({"error": start_error}), 400
+
+    if end_error:
+        return jsonify({"error": end_error}), 400
+
     if risk_level and risk_level not in VALID_RISK_LEVELS:
         return jsonify({
             "error": "Invalid risk_level filter"
@@ -251,9 +323,21 @@ def list_events():
             "error": "Invalid status filter"
         }), 400
 
+    if source is not None and not source.strip():
+        return jsonify({
+            "error": "source filter cannot be empty"
+        }), 400
+
+    # Compare normalized values to catch invalid ranges.
+    if start_date and end_date and start_date > end_date:
+        return jsonify({
+            "error": "start_date must not be after end_date"
+        }), 400
+
     limit = parse_positive_int(
         request.args.get("limit"), 50, 500
     )
+
     offset = parse_positive_int(
         request.args.get("offset"), 1, 1000000
     ) - 1
@@ -271,7 +355,23 @@ def list_events():
 
     if source:
         query += " AND source = ?"
-        params.append(source)
+        params.append(source.strip())
+
+    if start_date:
+        query += " AND timestamp >= ?"
+        params.append(start_date)
+
+    if end_date:
+        # A date-only end date includes the entire selected day.
+        if raw_end_date and len(raw_end_date) == 10:
+            next_day = (
+                datetime.fromisoformat(raw_end_date) + timedelta(days=1)
+            )
+            query += " AND timestamp < ?"
+            params.append(next_day.isoformat())
+        else:
+            query += " AND timestamp <= ?"
+            params.append(end_date)
 
     query += " ORDER BY id DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
@@ -281,7 +381,7 @@ def list_events():
 
     return jsonify({
         "count": len(rows),
-        "events": [row_to_dict(row) for row in rows]
+        "events": [row_to_dict(row) for row in rows],
     })
 
 
@@ -292,7 +392,7 @@ def get_event(event_id):
     with get_db() as conn:
         row = conn.execute(
             "SELECT * FROM events WHERE id = ?",
-            (event_id,)
+            (event_id,),
         ).fetchone()
 
     if row is None:
@@ -323,13 +423,16 @@ def update_event(event_id):
 
     if status not in VALID_STATUSES:
         return jsonify({
-            "error": "status must be New, In Progress, or Resolved"
+            "error": (
+                "status must be New, Reviewed, "
+                "False Positive, or Escalated"
+            )
         }), 400
 
     with get_db() as conn:
         cursor = conn.execute(
             "UPDATE events SET status = ? WHERE id = ?",
-            (status, event_id)
+            (status, event_id),
         )
 
         if cursor.rowcount == 0:
@@ -339,7 +442,7 @@ def update_event(event_id):
 
         row = conn.execute(
             "SELECT * FROM events WHERE id = ?",
-            (event_id,)
+            (event_id,),
         ).fetchone()
 
     return jsonify(row_to_dict(row))
@@ -366,26 +469,34 @@ def get_stats():
             GROUP BY status
         """).fetchall()
 
-    risk_counts = {
-        level: 0 for level in VALID_RISK_LEVELS
-    }
+        source_rows = conn.execute("""
+            SELECT source, COUNT(*) AS total
+            FROM events
+            GROUP BY source
+        """).fetchall()
+
+    risk_counts = {level: 0 for level in VALID_RISK_LEVELS}
     risk_counts.update({
         row["risk_level"]: row["total"]
         for row in risk_rows
     })
 
-    status_counts = {
-        status: 0 for status in VALID_STATUSES
-    }
+    status_counts = {status: 0 for status in VALID_STATUSES}
     status_counts.update({
         row["status"]: row["total"]
         for row in status_rows
     })
 
+    source_counts = {
+        row["source"]: row["total"]
+        for row in source_rows
+    }
+
     return jsonify({
         "total_events": total,
         "risk_counts": risk_counts,
-        "status_counts": status_counts
+        "status_counts": status_counts,
+        "source_counts": source_counts,
     })
 
 

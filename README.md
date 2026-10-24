@@ -2,38 +2,26 @@
 
 ## Overview
 
-Raksha SOC Dashboard is a web-based Security Operations Center (SOC) dashboard designed to display and manage security events. It provides an interface for viewing security alerts, searching and filtering events, viewing event details, and updating event statuses.
+Raksha SOC Dashboard is a web-based Security Operations Center (SOC) application for viewing, filtering, and managing security events. It uses a Flask REST API, a React frontend, SQLite for data persistence, and a machine-learning pipeline to classify security logs as Benign, Suspicious, or Malicious.
 
 ## Features
 
-- **Security Event Dashboard:** View security events in a centralized interface.
-- **Event Details:** Open an event to view its details.
-- **Search:** Search for security events.
-- **Filtering:** Filter events based on available criteria.
-- **Status Management:** Update the status of security events.
-- **Backend API:** Use a Flask-based backend to handle event requests.
-- **Data Persistence:** Store event data using SQLite.
-- **Machine Learning Components:** Includes a machine-learning-related project component.
+- View security events and event details.
+- Search, filter, and sort events.
+- Filter by risk level, source, and status.
+- View event statistics and risk distribution.
+- Update event statuses.
+- Store events in SQLite.
+- Classify log messages using TF-IDF and Logistic Regression.
+- Protect write operations with API-key authentication.
 
 ## Technology Stack
 
-### Frontend
-- React
-- Vite
-- JavaScript
-- CSS
+**Frontend:** React, Vite, JavaScript, CSS
 
-### Backend
-- Python
-- Flask
-- Flask-CORS
-- SQLite
+**Backend:** Python, Flask, Flask-CORS, SQLite
 
-### Machine Learning
-- Python
-- scikit-learn
-- joblib
-- pandas
+**Machine learning:** pandas, scikit-learn, joblib
 
 ## Project Structure
 
@@ -43,17 +31,17 @@ raksha-soc-dashboard/
 ├── .gitignore
 ├── backend/
 │   ├── app.py
-│   └── requirements.txt
+│   ├── requirements.txt
+│   └── model.joblib
 ├── frontend/
 │   ├── src/
-│   ├── package.json
-│   └── ...
+│   └── package.json
 └── ml/
+    ├── train_model.py
+    └── training_data.csv
 ```
 
 ## Prerequisites
-
-Install the following before running the project:
 
 - Python
 - Node.js and npm
@@ -61,104 +49,130 @@ Install the following before running the project:
 
 ## Getting Started
 
-### 1. Start the Backend
+### 1. Set up and run the backend
 
-Open a terminal in Visual Studio Code.
+Open a terminal in the project root and run:
 
-Navigate to the backend folder:
-
-```bash
+```powershell
 cd backend
-```
-
-Create and activate a Python virtual environment if you have not already created one.
-
-On Windows:
-
-```bash
 python -m venv .venv
-.venv\Scripts\activate
-```
-
-Install the backend dependencies:
-
-```bash
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-Start the Flask application:
+Set the API key for the current PowerShell session:
 
-```bash
+```powershell
+$env:RAKSHA_API_KEY = "dev-secret-change-me"
+```
+
+Start the Flask server:
+
+```powershell
 python app.py
 ```
 
-The backend should be available at:
+The backend runs at `http://127.0.0.1:5000`.
 
-`http://127.0.0.1:5000`
+Keep this terminal open. The API key above is for local development only; use a strong private value in other environments.
 
-### 2. Start the Frontend
+### 2. Set up and run the frontend
 
-Open a **second terminal** in Visual Studio Code.
+Open a second terminal at the project root:
 
-Navigate to the frontend folder from the project root:
-
-```bash
+```powershell
 cd frontend
-```
-
-Install the frontend dependencies:
-
-```bash
 npm install
-```
-
-Start the development server:
-
-```bash
 npm run dev
 ```
 
-Open the local URL displayed in the terminal. It is typically:
+Open the local URL shown by Vite in the terminal, commonly `http://localhost:5173`.
 
-`http://localhost:5173`
+Keep both servers running while using the dashboard.
 
-Keep both terminals running while using the dashboard.
+### 3. Train the machine-learning model
+
+From a terminal at the project root, activate the Python environment used for the backend and run:
+
+```powershell
+python ml\train_model.py
+```
+
+The training script reads `ml/training_data.csv`, splits the labeled data into training and test sets, trains a TF-IDF and Logistic Regression pipeline, prints evaluation metrics, and saves the final model to `backend/model.joblib`.
+
+## Machine-Learning Evaluation
+
+Evaluation from the current training run:
+
+| Metric | Result |
+|---|---:|
+| Labeled examples | 36 |
+| Training examples | 28 |
+| Testing examples | 8 |
+| Accuracy | 62.5% |
+| Macro F1-score | 0.5833 |
+| Weighted F1-score | 0.5938 |
+
+The evaluation uses a held-out test set of eight examples. These metrics are an initial baseline and may vary if the dataset or training configuration changes. A larger, representative labeled dataset is recommended for more reliable performance estimates.
+
+## API Endpoints
+
+The Flask backend provides the following endpoints:
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/events` | Retrieve events; supports filters and pagination implemented by the backend |
+| POST | `/events` | Create or submit security events |
+| GET | `/events/<id>` | Retrieve a specific event |
+| PATCH | `/events/<id>` | Update an event's status |
+| GET | `/stats` | Retrieve event statistics |
+
+The events endpoint supports filters such as risk level, status, source, and date range, as implemented by the backend.
+
+### API-key authentication
+
+Write operations require the `X-API-Key` request header. For local development, the key is configured using the `RAKSHA_API_KEY` environment variable.
+
+Example PowerShell request to update an event:
+
+```powershell
+$headers = @{ "X-API-Key" = "dev-secret-change-me" }
+$body = @{ status = "Reviewed" } | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:5000/events/1" `
+  -Method Patch `
+  -Headers $headers `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+Use a valid status supported by the application. Do not commit real API keys or other secrets to version control.
 
 ## Usage
 
-1. Start the backend and frontend.
-2. Open the dashboard in your browser.
-3. View the security events displayed on the dashboard.
-4. Use the search and filter controls to find events.
-5. Open an event to inspect its details.
-6. Update an event's status using the available controls.
+1. Start the Flask backend.
+2. Start the React frontend.
+3. Open the frontend URL shown by Vite.
+4. Review events and their risk levels.
+5. Search, filter, and sort the event list.
+6. Open an event to inspect its details.
+7. Update its status as needed.
 
-## API
+## Security and Generated Files
 
-The backend provides API functionality for managing security events.
-
-Known endpoints include:
-
-- `GET /events` — Retrieve security events.
-- `POST /events` — Submit a security event.
-
-The exact request fields and response formats depend on the implementation in `backend/app.py`.
-
-## Security and Configuration
-
-- Do not commit passwords, API keys, access tokens, or other secrets.
-- Keep local environment files and generated database files out of version control.
-- Use the root `.gitignore` file to exclude local and generated files.
+- Do not commit passwords, private API keys, or access tokens.
+- Keep virtual environments, `node_modules`, build output, and local database files out of version control when appropriate.
+- Review `.gitignore` before pushing the project to GitHub.
 
 ## Future Improvements
 
-Potential improvements include:
-
-- More advanced event analytics and visualizations.
-- Improved alert classification and prioritization.
-- Additional automated tests.
-- More detailed documentation of API request and response formats.
+- Expand the labeled training dataset.
+- Improve and further validate classification performance.
+- Add automated API and frontend tests.
+- Document complete request and response schemas.
+- Add deployment and production configuration instructions.
 
 ## License
 
-This project was created for educational and assignment purposes. Add a license if one is required for your intended use.
+Created for educational and assignment purposes. Add a license if required by your intended use.
